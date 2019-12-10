@@ -19,20 +19,33 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 
 
 path = "Images"
-
+test_path = "Test"
 
 cv2.setUseOptimized(True);
 ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
 
+im = cv2.imread(os.path.join(path,"42850.jpg"))
+ss.setBaseImage(im)
+ss.switchToSelectiveSearchFast()
+rects = ss.process()
+imOut = im.copy()
+for i, rect in (enumerate(rects)):
+    x, y, w, h = rect
+#     print(x,y,w,h)
+#     imOut = imOut[x:x+w,y:y+h]
+    cv2.rectangle(imOut, (x, y), (x+w, y+h), (0, 255, 0), 1, cv2.LINE_AA)
+# plt.figure()
+plt.imshow(imOut)
+plt.show()
 
-# In[8]:
-
-
+# 从文件中加载模型
 model_loaded = keras.models.load_model('ieeercnn_vgg16_1.h5')
 model_loaded.summary()
 
+# 从文件中加载训练历史
 hist = pickle.load(open('history.dat', 'rb'))
 
+# 显示训练历史
 import matplotlib.pyplot as plt
 # plt.plot(hist.history["acc"])
 # plt.plot(hist.history['val_acc'])
@@ -46,9 +59,6 @@ plt.savefig('chart loss.png')
 plt.show()
 
 
-
-# In[ ]:
-
 X_test = pickle.load(open('X_test.dat', 'rb'))
 
 im = X_test[1600]
@@ -61,6 +71,7 @@ else:
     print("not plane")
 plt.show()
 
+print("Model predicting and saving results...")
 z=0
 for e,i in enumerate(os.listdir(path)):
     if i.startswith("4"):
@@ -81,5 +92,5 @@ for e,i in enumerate(os.listdir(path)):
                     cv2.rectangle(imout, (x, y), (x+w, y+h), (0, 255, 0), 1, cv2.LINE_AA)
         plt.figure()
         plt.imshow(imout)
-        plt.show()
+        plt.savefig(os.path.join(test_path,i + '.png'))
 

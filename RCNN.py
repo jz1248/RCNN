@@ -2,10 +2,8 @@
 # coding: utf-8
 
 
-# In[3]:
-
-
 import os,cv2, keras
+import time
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -30,36 +28,18 @@ from keras.callbacks import ModelCheckpoint, EarlyStopping
 
 path = "Images"
 annot = "Airplanes_Annotations"
+test_path = "Test"
 
+start_time = time.time()
 
 cv2.setUseOptimized(True)
 ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
-
-im = cv2.imread(os.path.join(path,"42850.jpg"))
-ss.setBaseImage(im)
-ss.switchToSelectiveSearchFast()
-rects = ss.process()
-imOut = im.copy()
-for i, rect in (enumerate(rects)):
-    x, y, w, h = rect
-#     print(x,y,w,h)
-#     imOut = imOut[x:x+w,y:y+h]
-    cv2.rectangle(imOut, (x, y), (x+w, y+h), (0, 255, 0), 1, cv2.LINE_AA)
-# plt.figure()
-plt.imshow(imOut)
-plt.show()
-
-
-# In[9]:
 
 
 train_images=[]
 train_labels=[]
 
-
-# In[10]:
-
-
+# 计算Intersection of Union
 def get_iou(bb1, bb2):
     assert bb1['x1'] < bb1['x2']
     assert bb1['y1'] < bb1['y2']
@@ -84,21 +64,16 @@ def get_iou(bb1, bb2):
     assert iou <= 1.0
     return iou
 
-
-# In[11]:
-
-
 ss = cv2.ximgproc.segmentation.createSelectiveSearchSegmentation()
 
-
-# In[ ]:
-
-
+# 生成区域，调整子图像，与Ground Truth比较，生成标签数据
+start_time = time.time()
+print("Processing images...")
 for e,i in enumerate(os.listdir(annot)):
     try:
         if i.startswith("airplane"):
             filename = i.split(".")[0]+".jpg"
-            print(e,filename)
+            print(e,filename, end='')
             image = cv2.imread(os.path.join(path,filename))
             df = pd.read_csv(os.path.join(annot,i))
             gtvalues=[]
@@ -117,6 +92,7 @@ for e,i in enumerate(os.listdir(annot)):
             flag = 0
             fflag = 0
             bflag = 0
+            print('\tCalculating IoU and generating samples...', end='')
             for e,result in enumerate(ssresults):
                 if e < 2000 and flag == 0:
                     for gtval in gtvalues:
@@ -141,50 +117,29 @@ for e,i in enumerate(os.listdir(annot)):
                         else :
                             bflag = 1
                     if fflag == 1 and bflag == 1:
-                        print("inside")
+                        print(" inside ", end='')
                         flag = 1
+            print('Done')
     except Exception as e:
         print(e)
         print("error in "+filename)
         continue
 
 
-# In[ ]:
-
-
 X_new = np.array(train_images)
 y_new = np.array(train_labels)
+print("Preprocessing finished. Took" + str(time.time() - start_time) + 'seconds.')
 
-
-# In[ ]:
-
-
-X_new.shape
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
+# 迁移学习，使用VGG16网络，加载ImageNet预训练模型
 vggmodel = VGG16(weights='imagenet', include_top=True)
 vggmodel.summary()
 
-
-# In[ ]:
-
-
+# 锁定除最后一层外的所有层
 for layers in (vggmodel.layers)[:15]:
     print(layers)
     layers.trainable = False
-
 X= vggmodel.layers[-2].output
 predictions = Dense(2, activation="softmax")(X)
-
 model_final = Model(input = vggmodel.input, output = predictions)
 opt = Adam(lr=0.0001)
 model_final.compile(loss = keras.losses.categorical_crossentropy, optimizer = opt, metrics=["accuracy"])
@@ -208,34 +163,33 @@ class MyLabelBinarizer(LabelBinarizer):
 lenc = MyLabelBinarizer()
 Y =  lenc.fit_transform(y_new)
 
-
+# 分割数据集为训练集和测试集
 X_train, X_test , y_train, y_test = train_test_split(X_new,Y,test_size=0.10)
 pickle.dump(X_train, open('X_train.dat', 'wb'))
 pickle.dump(X_test, open('X_test.dat', 'wb'))
 pickle.dump(y_train, open('y_train.dat', 'wb'))
 pickle.dump(y_test, open('y_test.dat', 'wb'))
-
-
 print(X_train.shape,X_test.shape,y_train.shape,y_test.shape)
 
-
+# 对数据集进行水平竖直翻转及旋转处理，增大数据集
 trdata = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=90)
 traindata = trdata.flow(x=X_train, y=y_train)
 tsdata = ImageDataGenerator(horizontal_flip=True, vertical_flip=True, rotation_range=90)
 testdata = tsdata.flow(x=X_test, y=y_test)
 
-
-
+# 训练配置
 checkpoint = ModelCheckpoint("ieeercnn_vgg16_1.h5", monitor='val_loss', verbose=1, save_best_only=True, save_weights_only=False, mode='auto', period=1)
-early = EarlyStopping(monitor='val_loss', min_delta=0, patience=300, verbose=1, mode='auto')
+# early = EarlyStopping(monitor='val_loss', min_delta=0, patience=300, verbose=1, mode='auto')
 
-
-
-hist = model_final.fit_generator(generator= traindata, steps_per_epoch= 10, epochs= 1000, validation_data= testdata, validation_steps=2, callbacks=[checkpoint,early])
+# 调用 Keras API 开始训练
+start_time = time.time()
+hist = model_final.fit_generator(generator= traindata, steps_per_epoch= 10, epochs= 1000, validation_data= testdata, validation_steps=2, callbacks=[checkpoint])
+print("Training finished. Took " + str(time.time() - start_time) + ' seconds.')
+print("Saving training history...", end='')
 pickle.dump(hist, open('history.dat', 'wb'))
+print('Done')
 
-
-
+# 显示训练历史
 import matplotlib.pyplot as plt
 # plt.plot(hist.history["acc"])
 # plt.plot(hist.history['val_acc'])
@@ -245,10 +199,10 @@ plt.title("model loss")
 plt.ylabel("Loss")
 plt.xlabel("Epoch")
 plt.legend(["Loss","Validation Loss"])
-plt.show()
 plt.savefig('chart loss.png')
 
-
+# 在训练集图片上使用模型进行标注
+print("Model predicting and saving results...")
 z=0
 for e,i in enumerate(os.listdir(path)):
     if i.startswith("4"):
@@ -269,7 +223,5 @@ for e,i in enumerate(os.listdir(path)):
                     cv2.rectangle(imout, (x, y), (x+w, y+h), (0, 255, 0), 1, cv2.LINE_AA)
         plt.figure()
         plt.imshow(imout)
+        plt.savefig(os.path.join(test_path,i + '.png'))
 
-
-
-# %%
